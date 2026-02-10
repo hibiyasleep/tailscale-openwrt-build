@@ -28,14 +28,9 @@ if [ ! -d "$SRC_DIR/.git" ]; then
   git clone --depth 1 --branch "$TAILSCALE_VERSION" https://github.com/tailscale/tailscale.git "$SRC_DIR"
 fi
 
-# ── Assemble build tags ────────────────────────────────────────
-TAGS=""
-for t in "${INCLUDE_TAGS[@]}"; do
-  TAGS+="${TAGS:+,}${t}"
-done
-for t in "${OMIT_TAGS[@]}"; do
-  TAGS+="${TAGS:+,}ts_omit_${t}"
-done
+# ── Assemble build tags (via featuretags tool) ────────────────
+FEATURES_CSV="$(IFS=,; echo "${FEATURES[*]}")"
+TAGS="$(cd "$SRC_DIR" && go run ./cmd/featuretags --min --add "$FEATURES_CSV")"
 echo "Build tags: $TAGS"
 
 # ── Version stamps ──────────────────────────────────────────────

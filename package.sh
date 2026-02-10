@@ -101,7 +101,7 @@ Package: ${pkg_name}
 Version: ${VERSION}
 Architecture: ${arch_label}
 Maintainer: auto-build
-Description: Tailscale VPN combined binary (${arch_label}) — built with aggressive ts_omit tags and UPX compression.
+Description: Tailscale VPN combined binary (${arch_label}) built with aggressive ts_omit and UPX compression.
 Installed-Size: ${installed_size}
 Depends: libc, kmod-tun, iptables
 Section: net

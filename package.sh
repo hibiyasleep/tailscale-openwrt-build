@@ -51,8 +51,8 @@ build_ipk() {
   mkdir -p "$work"/{control,data}
 
   # ── data tree ─────────────────────────────────────────────────
-  install -Dm755 "$binary" "$work/data/usr/sbin/tailscaled"
   mkdir -p "$work/data/usr/sbin"
+  install -m755 "$binary" "$work/data/usr/sbin/tailscaled"
   ln -sf tailscaled "$work/data/usr/sbin/tailscale"
 
   # init script (procd)
@@ -158,8 +158,8 @@ for spec in "${TARGETS[@]}"; do
     {
       for ipk in *.ipk; do
         [ -f "$ipk" ] || continue
-        ar p "$ipk" control.tar.gz | tar xzf - ./control -O 2>/dev/null || \
-        ar p "$ipk" control.tar.gz | tar xzf - control -O
+        ar p "$ipk" control.tar.gz | tar xzfO - ./control 2>/dev/null || \
+        ar p "$ipk" control.tar.gz | tar xzfO - control
         echo "Filename: $ipk"
         echo "Size: $(stat -f%z "$ipk" 2>/dev/null || stat -c%s "$ipk")"
         echo "SHA256sum: $(sha256sum "$ipk" | awk '{print $1}')"

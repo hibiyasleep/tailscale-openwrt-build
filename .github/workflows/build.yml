@@ -100,10 +100,16 @@ jobs:
           chmod +x package.sh
           ./package.sh "${{ matrix.arch }}"
 
+      - name: Sanitize arch for artifact name
+        id: safe
+        run: echo "name=${ARCH//:/_}" >> "$GITHUB_OUTPUT"
+        env:
+          ARCH: ${{ matrix.arch }}
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ipk-${{ matrix.arch }}
+          name: ipk-${{ steps.safe.outputs.name }}
           path: |
             tailscale_*.ipk
             feed/

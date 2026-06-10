@@ -8,10 +8,14 @@ on:
       tailscale_version:
         description: 'Tailscale version (or "latest")'
         default: 'latest'
-      test_build:
-        description: 'Test build (skip release check and do not publish)'
-        type: boolean
-        default: false
+      mode:
+        description: 'Build mode'
+        type: choice
+        default: 'Normal'
+        options:
+          - Normal       # skip if already released, then publish
+          - Test         # always build, do not publish
+          - Re-release   # always build and publish as a new "-N" suffixed release
 
 permissions:
   contents: write
@@ -19,7 +23,7 @@ permissions:
   id-token: write
 
 jobs:
-  # ── Resolve version & build matrix ────────────────────────────
+  # --- Resolve version & build matrix ----------------------------------------
   prepare:
     runs-on: ubuntu-latest
     outputs:
@@ -42,21 +46,31 @@ jobs:
           if [ "$TAILSCALE_VERSION" = "latest" ]; then
             TAILSCALE_VERSION="$(curl -fsSL https://api.github.com/repos/tailscale/tailscale/releases/latest | jq -r .tag_name)"
           fi
+          if [ "${{ github.event.inputs.mode }}" = "Re-release" ]; then
+            # Find the next free -N suffix so we publish a fresh release instead of overwriting.
+            n=1
+            while gh release view "build-${TAILSCALE_VERSION}-${n}" >/dev/null 2>&1; do
+              n=$((n + 1))
+            done
+            TAILSCALE_VERSION="${TAILSCALE_VERSION}-${n}"
+          fi
           echo "version=$TAILSCALE_VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved version: $TAILSCALE_VERSION"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check if already released
         id: check
         run: |
-          if [ "${{ github.event.inputs.test_build }}" = "true" ]; then
+          if [ "${{ github.event.inputs.mode }}" != "Normal" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "Test build — skipping release check."
+            echo "${{ github.event.inputs.mode }} mode; skipping release check."
             exit 0
           fi
           TAG="build-${{ steps.version.outputs.version }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Release $TAG already exists — skipping."
+            echo "Release $TAG already exists; skipping."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
@@ -72,7 +86,7 @@ jobs:
           echo "architectures=$json" >> "$GITHUB_OUTPUT"
           echo "Matrix: $json"
 
-  # ── Per-architecture build ────────────────────────────────────
+  # --- Per-architecture build ------------------------------------------------
   build:
     needs: prepare
     if: needs.prepare.outputs.skip != 'true'
@@ -123,10 +137,10 @@ jobs:
             tailscale_*.ipk
             feed/
 
-  # ── Collect artifacts, release, deploy feed ───────────────────
+  # --- Collect artifacts, release, deploy feed -------------------------------
   release:
     needs: [prepare, build]
-    if: needs.prepare.outputs.skip != 'true' && github.event.inputs.test_build != 'true'
+    if: needs.prepare.outputs.skip != 'true' && github.event.inputs.mode != 'Test'
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts

@@ -32,10 +32,11 @@ Produces `.ipk` packages with aggressive feature stripping + UPX compression; sm
    edit `/etc/opkg/customfeeds.conf`:
 
    ```
-   src/gz tailscale https://hibiyasleep.github.io/tailscale-openwrt-build/packages/mipsle_softfloat
+   src/gz tailscale https://hibiyasleep.github.io/tailscale-openwrt-build/packages/mipsel_24kc
    ```
 
-   Replace `mipsle_softfloat` with your device's architecture (see [Architectures](#architectures)).
+   Replace `mipsel_24kc` with your device's architecture — run `opkg print-architecture`
+   on the router to see what it accepts (see [Architectures](#architectures)).
 
 3. **Install:**  
    ```sh
@@ -57,7 +58,7 @@ Everything lives in [`build.conf`](build.conf):
 | Variable | Purpose |
 |---|---|
 | `TAILSCALE_VERSION` | `"latest"` (auto-detect) or a pinned tag like `"v1.78.1"` |
-| `ARCHITECTURES` | Array of `GOARCH:VARIANT` targets |
+| `ARCHITECTURES` | List of OpenWRT/opkg arch names (e.g. `mipsel_24kc`) |
 | `OMIT_TAGS` | Features to strip via `ts_omit_*` build tags |
 | `INCLUDE_TAGS` | Extra build tags (default: `ts_include_cli` for combined binary) |
 | `UPX_ENABLED` | `"true"` / `"false"` |
@@ -73,18 +74,27 @@ Comment out a tag to **re-enable** that feature. The defaults are aggressive —
 
 ### Architectures
 
-Controlled by the `ARCHITECTURES` array in [`build.conf`](build.conf).  
-Format: `GOARCH:VARIANT` — the variant maps to `GOMIPS`, `GOARM`, etc.  
-Uncomment the lines you need.
+Controlled by the `ARCHITECTURES` array in [`build.conf`](build.conf) — just list the
+**OpenWRT/opkg architecture names**. The Go toolchain settings (`GOARCH`/`GOMIPS`/`GOARM`)
+are derived from each name in `build.sh`, since opkg names are more specific than Go's.
 
-| Spec | Target | Feed path |
-|---|---|---|
-| `mipsle:softfloat` | MIPS little-endian soft-float (many MediaTek routers) | `packages/mipsle_softfloat` |
-| `mips:softfloat` | MIPS big-endian soft-float (Atheros/QCA) | `packages/mips_softfloat` |
-| `arm:7` | ARMv7 (Cortex-A) | `packages/arm_7` |
-| `arm:6` | ARMv6 (RPi 1 / Zero class) | `packages/arm_6` |
-| `arm64:` | AArch64 | `packages/arm64` |
-| `amd64:` | x86-64 | `packages/amd64` |
+Get the exact name your device accepts by running on the router:
+
+```sh
+opkg print-architecture
+```
+
+The arch name must match, or opkg rejects the package as having "no valid architecture".
+
+| opkg arch | Target | Feed path |
+| --------- | ------ | --------- |
+| `mipsel_24kc` | ramips (mt7621/mt7620/mt76x8/rt305x) | `packages/mipsel_24kc` |
+| `mips_24kc` | big-endian MIPS (ath79/lantiq) | `packages/mips_24kc` |
+| `arm_cortex-a7_neon-vfpv4` | ARMv7 Cortex-A7 (ipq40xx, sunxi, …) | `packages/arm_cortex-a7_neon-vfpv4` |
+| `aarch64_cortex-a53` | AArch64 Cortex-A53 (mt7622, bcm27xx, …) | `packages/aarch64_cortex-a53` |
+| `x86_64` | x86-64 | `packages/x86_64` |
+
+ARM/AArch64 names vary by CPU/subtarget — the feed path always equals the arch name.
 
 ## Local builds
 
@@ -93,13 +103,13 @@ Uncomment the lines you need.
 ./build.sh
 
 # Build a single target
-./build.sh mipsle:softfloat
+./build.sh mipsel_24kc
 
 # Package all
 ./package.sh
 
 # Package a single target
-./package.sh arm:7
+./package.sh mipsel_24kc
 ```
 
 Requires: Go 1.22+, `git`, `curl`, `jq`, `ar`, and optionally `upx`.

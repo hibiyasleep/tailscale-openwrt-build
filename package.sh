@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# package.sh [GOARCH:VARIANT ...]
+# package.sh [OPKG_ARCH ...]   e.g. ./package.sh mipsel_24kc
 # Packages tailscale combined binaries into .ipk files and generates the opkg feed.
 # With no arguments, packages all ARCHITECTURES defined in build.conf.
 set -euo pipefail
@@ -18,27 +18,21 @@ if [ "$TAILSCALE_VERSION" = "latest" ]; then
 fi
 VERSION="${TAILSCALE_VERSION#v}"
 
-# ── Which architectures? ───────────────────────────────────────
+### Which architectures?
 if [ $# -gt 0 ]; then
   TARGETS=("$@")
 else
   TARGETS=("${ARCHITECTURES[@]}")
 fi
 
-# ── Helper: parse GOARCH:VARIANT → _ARCH_LABEL ─────────────────
+### Helper: the opkg arch name is the label verbatim
+# It ends up in the .ipk filename, the control "Architecture:" field, the feed
+# path, and must match `opkg print-architecture` on the device.
 parse_arch() {
-  local spec="$1"
-  _GOARCH="${spec%%:*}"
-  _VARIANT="${spec#*:}"
-  [ "$_VARIANT" = "$_GOARCH" ] && _VARIANT=""
-  if [ -n "$_VARIANT" ]; then
-    _ARCH_LABEL="${_GOARCH}_${_VARIANT}"
-  else
-    _ARCH_LABEL="${_GOARCH}"
-  fi
+  _ARCH_LABEL="$1"
 }
 
-# ── Helper: build one .ipk ─────────────────────────────────────
+### Helper: build one .ipk
 build_ipk() {
   local arch_label="$1"
   local binary="$SCRIPT_DIR/tailscale.combined.${arch_label}"
@@ -55,7 +49,7 @@ build_ipk() {
   rm -rf "$work"
   mkdir -p "$work"/{control,data}
 
-  # ── data tree ─────────────────────────────────────────────────
+  ### data tree
   mkdir -p "$work/data/usr/sbin"
   install -m755 "$binary" "$work/data/usr/sbin/tailscaled"
   ln -sf tailscaled "$work/data/usr/sbin/tailscale"
@@ -98,7 +92,7 @@ config settings 'settings'
     option state_dir '/var/lib/tailscale'
 CONFEOF
 
-  # ── control metadata ──────────────────────────────────────────
+  ### control metadata
   local installed_size
   installed_size="$(stat -f%z "$binary" 2>/dev/null || stat -c%s "$binary")"
   cat > "$work/control/control" <<EOF
@@ -128,7 +122,7 @@ exit 0
 EOF
   chmod 755 "$work/control/prerm"
 
-  # ── Assemble .ipk ────────────────────────────────────────────
+  # Assemble .ipk
   echo "2.0" > "$work/debian-binary"
   (cd "$work/control" && tar czf "$work/control.tar.gz" .)
   (cd "$work/data"    && tar czf "$work/data.tar.gz" .)
@@ -137,7 +131,7 @@ EOF
   (cd "$work" && ar rc "$ipk_file" debian-binary control.tar.gz data.tar.gz)
   echo "Created: $ipk_file ($(ls -lh "$ipk_file" | awk '{print $5}'))"
 
-  # ── Copy into per-arch feed dir ──────────────────────────────
+  # Copy into per-arch feed dir
   local feed_dir="$SCRIPT_DIR/feed/packages/${arch_label}"
   mkdir -p "$feed_dir"
   cp "$ipk_file" "$feed_dir/"
@@ -145,7 +139,7 @@ EOF
   rm -rf "$work"
 }
 
-# ── Build .ipk for each arch ───────────────────────────────────
+### Build .ipk for each arch
 for spec in "${TARGETS[@]}"; do
   parse_arch "$spec"
   echo ""
@@ -153,7 +147,7 @@ for spec in "${TARGETS[@]}"; do
   build_ipk "$_ARCH_LABEL"
 done
 
-# ── Generate opkg feed index (per-arch) ────────────────────────
+# Generate opkg feed index (per-arch)
 for spec in "${TARGETS[@]}"; do
   parse_arch "$spec"
   feed_dir="$SCRIPT_DIR/feed/packages/${_ARCH_LABEL}"
@@ -173,7 +167,7 @@ for spec in "${TARGETS[@]}"; do
     } > Packages
     gzip -kf Packages
 
-    # Sign the (uncompressed) index — opkg verifies Packages.sig after gunzip.
+    ### Sign the (uncompressed) index — opkg verifies Packages.sig after gunzip.
     if [ -n "$USIGN_SEC" ]; then
       if command -v usign >/dev/null 2>&1; then
         usign -S -m Packages -s "$USIGN_SEC" -x Packages.sig

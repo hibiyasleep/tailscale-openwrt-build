@@ -23,7 +23,7 @@ permissions:
   id-token: write
 
 jobs:
-  # --- Resolve version & build matrix ----------------------------------------
+  # --- Resolve version & build matrix
   prepare:
     runs-on: ubuntu-latest
     outputs:
@@ -86,7 +86,7 @@ jobs:
           echo "architectures=$json" >> "$GITHUB_OUTPUT"
           echo "Matrix: $json"
 
-  # --- Per-architecture build ------------------------------------------------
+  # --- Per-architecture build
   build:
     needs: prepare
     if: needs.prepare.outputs.skip != 'true'
@@ -162,7 +162,7 @@ jobs:
             tailscale_*.ipk
             feed/
 
-  # --- Collect artifacts, release, deploy feed -------------------------------
+  # --- Collect artifacts, release, deploy feed
   release:
     needs: [prepare, build]
     if: needs.prepare.outputs.skip != 'true' && github.event.inputs.mode != 'Test'

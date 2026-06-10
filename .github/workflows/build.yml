@@ -108,6 +108,29 @@ jobs:
       - name: Install UPX
         run: sudo apt-get update && sudo apt-get install -y upx-ucl
 
+      - name: Build usign (OpenWRT feed signer)
+        run: |
+          sudo apt-get install -y cmake
+          git clone --depth=1 https://git.openwrt.org/project/usign.git /tmp/usign
+          cmake -S /tmp/usign -B /tmp/usign/build
+          cmake --build /tmp/usign/build
+          sudo install -m755 /tmp/usign/build/usign /usr/local/bin/usign
+          command -v usign
+
+      - name: Write feed signing key
+        id: signkey
+        env:
+          USIGN_SECRET_KEY: ${{ secrets.USIGN_SECRET_KEY }}
+        run: |
+          if [ -n "$USIGN_SECRET_KEY" ]; then
+            printf '%s\n' "$USIGN_SECRET_KEY" > "$RUNNER_TEMP/tailscale-feed.sec"
+            chmod 600 "$RUNNER_TEMP/tailscale-feed.sec"
+            echo "path=$RUNNER_TEMP/tailscale-feed.sec" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::USIGN_SECRET_KEY secret not set — feed will be UNSIGNED."
+            echo "path=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Override version from workflow input
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.tailscale_version != ''
         run: |
@@ -119,6 +142,8 @@ jobs:
           ./build.sh "${{ matrix.arch }}"
 
       - name: Package .ipk
+        env:
+          USIGN_SEC: ${{ steps.signkey.outputs.path }}
         run: |
           chmod +x package.sh
           ./package.sh "${{ matrix.arch }}"

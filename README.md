@@ -14,7 +14,21 @@ Produces `.ipk` packages with aggressive feature stripping + UPX compression —
 
 ## Quick start — install on your router
 
-1. **Add the feed** — edit `/etc/opkg/customfeeds.conf`:
+1. **Trust the feed signing key** — the opkg index is signed with `usign`. Install
+   the public key so `opkg` can verify it (stock OpenWRT has `check_signature`
+   enabled by default, and will reject the feed otherwise):
+
+   ```sh
+   cat > /etc/opkg/keys/7e4a00c1131ea1d0 <<'EOF'
+   untrusted comment: public key 7e4a00c1131ea1d0
+   RWR+SgDBEx6h0LTMVke+FNmp7a2cTl0eTif3hUVu9d1WTdvvn/i2ltYG
+   EOF
+   ```
+
+   The file **must** be named after the key's fingerprint (`7e4a00c1131ea1d0`).
+   This is the public half of [`tailscale-feed.pub`](tailscale-feed.pub).
+
+2. **Add the feed** — edit `/etc/opkg/customfeeds.conf`:
 
    ```
    src/gz tailscale https://hibiyasleep.github.io/tailscale-openwrt-build/packages/mipsle_softfloat
@@ -22,14 +36,14 @@ Produces `.ipk` packages with aggressive feature stripping + UPX compression —
 
    Replace `mipsle_softfloat` with your device's architecture (see [Architectures](#architectures)).
 
-2. **Install:**
+3. **Install:**
 
    ```sh
    opkg update
    opkg install tailscale
    ```
 
-3. **Start & authenticate:**
+4. **Start & authenticate:**
 
    ```sh
    /etc/init.d/tailscale enable
@@ -118,8 +132,18 @@ Requires: Go 1.22+, `git`, `curl`, `jq`, `ar`, and optionally `upx`.
 The [GitHub Actions workflow](.github/workflows/build.yml) has three jobs:
 
 1. **`prepare`** — resolves the Tailscale version, checks for existing release, generates the architecture matrix from `build.conf`.
-2. **`build`** — matrix job: one parallel runner per architecture. Compiles, compresses, packages `.ipk`, uploads artifacts.
+2. **`build`** — matrix job: one parallel runner per architecture. Compiles, compresses, packages `.ipk`, signs the feed index, uploads artifacts.
 3. **`release`** — collects all `.ipk` artifacts, creates a GitHub Release, deploys the opkg feed to `gh-pages`.
+
+### Feed signing
+
+The opkg index (`Packages`) is signed with [`usign`](https://git.openwrt.org/?p=project/usign.git)
+to produce `Packages.sig`, which `opkg` verifies on the router.
+
+- **Public key:** [`tailscale-feed.pub`](tailscale-feed.pub) (keynum `7e4a00c1131ea1d0`), committed and shipped to users — see [Quick start](#quick-start--install-on-your-router).
+- **Private key:** stored as the repository secret **`USIGN_SECRET_KEY`** (the full contents of the `.sec` file). Never commit it; `*.sec` is git-ignored.
+
+If the secret is absent (e.g. a fork), the build still succeeds but emits an **unsigned** feed and a CI warning. To rotate the key: `usign -G -s new.sec -p new.pub`, replace `tailscale-feed.pub` + the README keynum, update the `USIGN_SECRET_KEY` secret, and have users reinstall the public key.
 
 Trigger a manual build from the Actions tab — you can optionally pin a version:
 

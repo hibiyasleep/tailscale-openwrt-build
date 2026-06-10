@@ -7,6 +7,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/build.conf"
 
+# Optional opkg feed signing. Point USIGN_SEC at a usign secret-key file to emit
+# a Packages.sig next to each feed index (opkg verifies this when check_signature
+# is enabled). Leave unset for an unsigned local build.
+USIGN_SEC="${USIGN_SEC:-}"
+
 # Resolve version for package metadata
 if [ "$TAILSCALE_VERSION" = "latest" ]; then
   TAILSCALE_VERSION="$(curl -fsSL https://api.github.com/repos/tailscale/tailscale/releases/latest | jq -r .tag_name)"
@@ -167,6 +172,16 @@ for spec in "${TARGETS[@]}"; do
       done
     } > Packages
     gzip -kf Packages
+
+    # Sign the (uncompressed) index — opkg verifies Packages.sig after gunzip.
+    if [ -n "$USIGN_SEC" ]; then
+      if command -v usign >/dev/null 2>&1; then
+        usign -S -m Packages -s "$USIGN_SEC" -x Packages.sig
+        echo "Signed: Packages.sig"
+      else
+        echo "WARN: USIGN_SEC set but 'usign' not in PATH; feed left UNSIGNED" >&2
+      fi
+    fi
   )
   echo "Feed index: $feed_dir/Packages"
 done

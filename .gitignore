@@ -3,5 +3,8 @@ _bin/
 feed/
 *.ipk
 
+# cert
+*.sec
+
 # macOS
 .DS_Store

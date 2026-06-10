@@ -1,0 +1,13 @@
+Package: tailscale
+Version: 1.98.5
+Architecture: arm64
+Maintainer: auto-build
+Description: Tailscale VPN combined binary (arm64) built with aggressive ts_omit and UPX compression.
+Installed-Size: 3529748
+Depends: libc, kmod-tun, iptables
+Section: net
+Priority: optional
+Filename: tailscale_1.98.5_arm64.ipk
+Size: 3530906
+SHA256sum: cea45aaf50f4ccbd627cf777ed96aca256dec86921a46ebf906fe3b322d88046
+

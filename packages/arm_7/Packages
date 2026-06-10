@@ -1,0 +1,13 @@
+Package: tailscale
+Version: 1.98.5
+Architecture: arm_7
+Maintainer: auto-build
+Description: Tailscale VPN combined binary (arm_7) built with aggressive ts_omit and UPX compression.
+Installed-Size: 3520860
+Depends: libc, kmod-tun, iptables
+Section: net
+Priority: optional
+Filename: tailscale_1.98.5_arm_7.ipk
+Size: 3521920
+SHA256sum: 8e8c56cce2e4aca4938a4e18560bce684d3fc33d13a4211f42825d4ab0d50cd4
+

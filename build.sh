@@ -69,7 +69,7 @@ parse_arch() {
       esac
       ;;
     *)
-      echo "ERROR: unknown opkg arch '$arch' — add a case to parse_arch() in build.sh" >&2
+      echo "ERROR: unknown opkg arch '$arch'; add a case to parse_arch() in build.sh" >&2
       exit 1
       ;;
   esac
@@ -80,7 +80,7 @@ for spec in "${TARGETS[@]}"; do
   parse_arch "$spec"
   OUTPUT="$SCRIPT_DIR/tailscale.combined.${_ARCH_LABEL}"
   echo ""
-  echo "━━━ Building for ${_ARCH_LABEL} (GOARCH=${_GOARCH}) ━━━"
+  echo "*** Building for ${_ARCH_LABEL} (GOARCH=${_GOARCH}) ***"
 
   (
     cd "$SRC_DIR"

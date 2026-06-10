@@ -12,6 +12,23 @@ source "$SCRIPT_DIR/build.conf"
 # is enabled). Leave unset for an unsigned local build.
 USIGN_SEC="${USIGN_SEC:-}"
 
+# All tarballs inside an .ipk must be owned by root:root (numeric), or files
+# land with the build user's uid/gid on the device. GNU and BSD tar differ.
+if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+  TAR_OPTS="--numeric-owner --owner=0 --group=0"
+else
+  TAR_OPTS="--numeric-owner --uid 0 --gid 0"
+fi
+
+# Portable sha256 (sha256sum on Linux/CI, shasum on macOS).
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 # Resolve version for package metadata
 if [ "$TAILSCALE_VERSION" = "latest" ]; then
   TAILSCALE_VERSION="$(curl -fsSL https://api.github.com/repos/tailscale/tailscale/releases/latest | jq -r .tag_name)"
@@ -52,7 +69,6 @@ build_ipk() {
   ### data tree
   mkdir -p "$work/data/usr/sbin"
   install -m755 "$binary" "$work/data/usr/sbin/tailscaled"
-  ln -sf tailscaled "$work/data/usr/sbin/tailscale"
 
   # init script (procd)
   mkdir -p "$work/data/etc/init.d"
@@ -102,33 +118,45 @@ Architecture: ${arch_label}
 Maintainer: auto-build
 Description: Tailscale VPN combined binary (${arch_label}) built with aggressive ts_omit and UPX compression.
 Installed-Size: ${installed_size}
-Depends: libc, kmod-tun, iptables
+Depends: libc, ca-bundle, kmod-tun
+Provides: tailscale tailscaled
 Section: net
 Priority: optional
 EOF
 
+  # Declare /etc/config/tailscale a conffile so opkg preserves a user's edits
+  # on upgrade instead of clobbering (or losing) it.
+  printf '/etc/config/tailscale\n' > "$work/control/conffiles"
+
+  # Use OpenWRT's default_postinst/default_prerm helpers (enable/disable+stop the
+  # init script, process conffiles). Create the CLI symlink here, remove in prerm.
   cat > "$work/control/postinst" <<'EOF'
 #!/bin/sh
-[ -x /etc/init.d/tailscale ] && /etc/init.d/tailscale enable
-exit 0
+[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
+[ -s "${IPKG_INSTROOT}/lib/functions.sh" ] || exit 0
+. "${IPKG_INSTROOT}/lib/functions.sh"
+ln -fs tailscaled "${IPKG_INSTROOT}/usr/sbin/tailscale"
+default_postinst "$0" "$@"
 EOF
   chmod 755 "$work/control/postinst"
 
   cat > "$work/control/prerm" <<'EOF'
 #!/bin/sh
-[ -x /etc/init.d/tailscale ] && /etc/init.d/tailscale disable
-/etc/init.d/tailscale stop 2>/dev/null || true
-exit 0
+[ -s "${IPKG_INSTROOT}/lib/functions.sh" ] || exit 0
+. "${IPKG_INSTROOT}/lib/functions.sh"
+rm -f "${IPKG_INSTROOT}/usr/sbin/tailscale"
+default_prerm "$0" "$@"
 EOF
   chmod 755 "$work/control/prerm"
 
-  # Assemble .ipk
+  # Assemble .ipk. OpenWRT's .ipk is a gzipped TAR (not an `ar` archive); opkg
+  # reads the data filelist from this format. All members owned by root:root.
   echo "2.0" > "$work/debian-binary"
-  (cd "$work/control" && tar czf "$work/control.tar.gz" .)
-  (cd "$work/data"    && tar czf "$work/data.tar.gz" .)
+  (cd "$work/control" && tar $TAR_OPTS -czf "$work/control.tar.gz" ./*)
+  (cd "$work/data"    && tar $TAR_OPTS -czf "$work/data.tar.gz" ./*)
 
   rm -f "$ipk_file"
-  (cd "$work" && ar rc "$ipk_file" debian-binary control.tar.gz data.tar.gz)
+  (cd "$work" && tar $TAR_OPTS -czf "$ipk_file" ./debian-binary ./control.tar.gz ./data.tar.gz)
   echo "Created: $ipk_file ($(ls -lh "$ipk_file" | awk '{print $5}'))"
 
   # Copy into per-arch feed dir
@@ -157,11 +185,12 @@ for spec in "${TARGETS[@]}"; do
     {
       for ipk in *.ipk; do
         [ -f "$ipk" ] || continue
-        ar p "$ipk" control.tar.gz | tar xzfO - ./control 2>/dev/null || \
-        ar p "$ipk" control.tar.gz | tar xzfO - control
+        # .ipk is a gzipped tar; pull control.tar.gz out, then ./control from it.
+        tar -xzOf "$ipk" ./control.tar.gz 2>/dev/null | tar -xzO ./control 2>/dev/null || \
+        tar -xzOf "$ipk" control.tar.gz    2>/dev/null | tar -xzO control
         echo "Filename: $ipk"
         echo "Size: $(stat -f%z "$ipk" 2>/dev/null || stat -c%s "$ipk")"
-        echo "SHA256sum: $(sha256sum "$ipk" | awk '{print $1}')"
+        echo "SHA256sum: $(sha256 "$ipk")"
         echo ""
       done
     } > Packages

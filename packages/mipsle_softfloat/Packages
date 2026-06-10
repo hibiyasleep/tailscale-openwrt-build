@@ -1,0 +1,13 @@
+Package: tailscale
+Version: 1.98.5
+Architecture: mipsle_softfloat
+Maintainer: auto-build
+Description: Tailscale VPN combined binary (mipsle_softfloat) built with aggressive ts_omit and UPX compression.
+Installed-Size: 3186020
+Depends: libc, kmod-tun, iptables
+Section: net
+Priority: optional
+Filename: tailscale_1.98.5_mipsle_softfloat.ipk
+Size: 3186252
+SHA256sum: 565f90bfcd395a90de424f0377781fc227a34cfdbce6d0f04a7c8b9379dab69f
+

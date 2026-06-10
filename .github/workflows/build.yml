@@ -8,6 +8,10 @@ on:
       tailscale_version:
         description: 'Tailscale version (or "latest")'
         default: 'latest'
+      test_build:
+        description: 'Test build (skip release check and do not publish)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -44,6 +48,11 @@ jobs:
       - name: Check if already released
         id: check
         run: |
+          if [ "${{ github.event.inputs.test_build }}" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Test build — skipping release check."
+            exit 0
+          fi
           TAG="build-${{ steps.version.outputs.version }}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -117,7 +126,7 @@ jobs:
   # ── Collect artifacts, release, deploy feed ───────────────────
   release:
     needs: [prepare, build]
-    if: needs.prepare.outputs.skip != 'true'
+    if: needs.prepare.outputs.skip != 'true' && github.event.inputs.test_build != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts

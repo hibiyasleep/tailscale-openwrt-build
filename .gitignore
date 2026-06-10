@@ -1,0 +1,7 @@
+# build outputs
+_bin/
+feed/
+*.ipk
+
+# macOS
+.DS_Store

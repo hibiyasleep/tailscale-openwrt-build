@@ -103,7 +103,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ipk-${{ matrix.arch }}
+          name: ipk-${{ replace(matrix.arch, ':', '_') }}
           path: |
             tailscale_*.ipk
             feed/

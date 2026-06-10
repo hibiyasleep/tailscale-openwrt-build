@@ -1,7 +1,7 @@
 # tailscale-openwrt-build
 
 Automated, size-optimised [Tailscale](https://tailscale.com) builds for OpenWRT routers.  
-Produces `.ipk` packages with aggressive feature stripping + UPX compression — small enough for devices with ≤16 MB flash.
+Produces `.ipk` packages with aggressive feature stripping + UPX compression; small enough for devices with small flash.
 
 ## Size budget
 
@@ -10,13 +10,13 @@ Produces `.ipk` packages with aggressive feature stripping + UPX compression —
 | Full combined binary (mipsle) | ~25–30 MB |
 | After `-s -w` strip | ~18–22 MB |
 | After aggressive `ts_omit` tags | ~10–14 MB |
-| After UPX `--best --lzma` | **~4–6 MB** |
+| After UPX `--best --lzma` | **~3–6 MB** |
 
 ## Quick start — install on your router
 
-1. **Trust the feed signing key** — the opkg index is signed with `usign`. Install
-   the public key so `opkg` can verify it (stock OpenWRT has `check_signature`
-   enabled by default, and will reject the feed otherwise):
+1. **Trust the feed signing key**  
+   the opkg index is signed with `usign`. Install the public key so `opkg` can verify it  
+   (stock OpenWRT has `check_signature` enabled by default, and will reject the feed otherwise):
 
    ```sh
    cat > /etc/opkg/keys/7e4a00c1131ea1d0 <<'EOF'
@@ -28,7 +28,8 @@ Produces `.ipk` packages with aggressive feature stripping + UPX compression —
    The file **must** be named after the key's fingerprint (`7e4a00c1131ea1d0`).
    This is the public half of [`tailscale-feed.pub`](tailscale-feed.pub).
 
-2. **Add the feed** — edit `/etc/opkg/customfeeds.conf`:
+2. **Add the feed**  
+   edit `/etc/opkg/customfeeds.conf`:
 
    ```
    src/gz tailscale https://hibiyasleep.github.io/tailscale-openwrt-build/packages/mipsle_softfloat
@@ -36,47 +37,18 @@ Produces `.ipk` packages with aggressive feature stripping + UPX compression —
 
    Replace `mipsle_softfloat` with your device's architecture (see [Architectures](#architectures)).
 
-3. **Install:**
-
+3. **Install:**  
    ```sh
    opkg update
    opkg install tailscale
    ```
 
-4. **Start & authenticate:**
-
+4. **Start & authenticate:**  
    ```sh
    /etc/init.d/tailscale enable
    /etc/init.d/tailscale start
    tailscale up
    ```
-
-## Architectures
-
-Controlled by the `ARCHITECTURES` array in [`build.conf`](build.conf).  
-Format: `GOARCH:VARIANT` — the variant maps to `GOMIPS`, `GOARM`, etc.
-
-| Spec | Target | Feed path |
-|---|---|---|
-| `mipsle:softfloat` | MIPS little-endian soft-float (many MediaTek routers) | `packages/mipsle_softfloat` |
-| `mips:softfloat` | MIPS big-endian soft-float (Atheros/QCA) | `packages/mips_softfloat` |
-| `arm:7` | ARMv7 (Cortex-A) | `packages/arm_7` |
-| `arm:6` | ARMv6 (RPi 1 / Zero class) | `packages/arm_6` |
-| `arm64:` | AArch64 | `packages/arm64` |
-| `amd64:` | x86-64 | `packages/amd64` |
-
-Uncomment the lines you need:
-
-```bash
-ARCHITECTURES=(
-  mipsle:softfloat
-  # mips:softfloat
-  # arm:7
-  # arm:6
-  # arm64:
-  # amd64:
-)
-```
 
 ## Configuration
 
@@ -95,19 +67,24 @@ Everything lives in [`build.conf`](build.conf):
 The `OMIT_TAGS` list controls which Tailscale features are compiled out.  
 Comment out a tag to **re-enable** that feature. The defaults are aggressive — suited for a headless router that only needs VPN routing.
 
-<details>
-<summary>Features kept by default</summary>
+| On by default | Off by default |
+| ------------- | -------------- |
+| `dns`, `netstack`, `osrouter`, `health`, `advertiseroutes`, `useroutes`, `useexitnode`, `portmapper`, `logtail`, `c2n`, `captiveportal`, `iptables` | `ssh`, `serve`, `drive`, `taildrop`, `kube`, `aws`, `bird`, `synology`, `doctor`, `debug`, `debugeventbus`, `debugportmapper`, `tpm`, `posture`, `systray`, `qrcodes`, `webclient`, `tap`, `relayserver`, `wakeonlan`, `colorable`, `completion`, `completion_scripts`, `capture`, `desktop_sessions`, `identityfederation`, `oauthkey`, `outboundproxy`, `acme`, `ace`, `conn25`, `cloud`, `netlog`, `hujsonconf`, `linkspeed`, `networkmanager`, `resolved`, `sdnotify`, `webbrowser`, `usermetrics`, `clientmetrics`, `clientupdate`, `appconnectors`, `tailnetlock`, `bakedroots`, `peerapiclient`, `peerapiserver`, `cachenetmap`, `lazywg`, `linuxdnsfight`, `listenrawdisco`, `syspolicy`, `unixsocketidentity`, `useproxy`, `gro`, `portlist`, `dbus` |
 
-`dns`, `netstack`, `osrouter`, `health`, `advertiseroutes`, `useroutes`, `useexitnode`, `portmapper`, `logtail`, `c2n`, `captiveportal`, `iptables`
+### Architectures
 
-</details>
+Controlled by the `ARCHITECTURES` array in [`build.conf`](build.conf).  
+Format: `GOARCH:VARIANT` — the variant maps to `GOMIPS`, `GOARM`, etc.  
+Uncomment the lines you need.
 
-<details>
-<summary>Features stripped by default (57 tags)</summary>
-
-`ssh`, `serve`, `drive`, `taildrop`, `kube`, `aws`, `bird`, `synology`, `doctor`, `debug`, `debugeventbus`, `debugportmapper`, `tpm`, `posture`, `systray`, `qrcodes`, `webclient`, `tap`, `relayserver`, `wakeonlan`, `colorable`, `completion`, `completion_scripts`, `capture`, `desktop_sessions`, `identityfederation`, `oauthkey`, `outboundproxy`, `acme`, `ace`, `conn25`, `cloud`, `netlog`, `hujsonconf`, `linkspeed`, `networkmanager`, `resolved`, `sdnotify`, `webbrowser`, `usermetrics`, `clientmetrics`, `clientupdate`, `appconnectors`, `tailnetlock`, `bakedroots`, `peerapiclient`, `peerapiserver`, `cachenetmap`, `lazywg`, `linuxdnsfight`, `listenrawdisco`, `syspolicy`, `unixsocketidentity`, `useproxy`, `gro`, `portlist`, `dbus`
-
-</details>
+| Spec | Target | Feed path |
+|---|---|---|
+| `mipsle:softfloat` | MIPS little-endian soft-float (many MediaTek routers) | `packages/mipsle_softfloat` |
+| `mips:softfloat` | MIPS big-endian soft-float (Atheros/QCA) | `packages/mips_softfloat` |
+| `arm:7` | ARMv7 (Cortex-A) | `packages/arm_7` |
+| `arm:6` | ARMv6 (RPi 1 / Zero class) | `packages/arm_6` |
+| `arm64:` | AArch64 | `packages/arm64` |
+| `amd64:` | x86-64 | `packages/amd64` |
 
 ## Local builds
 

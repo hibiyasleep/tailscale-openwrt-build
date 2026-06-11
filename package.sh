@@ -67,48 +67,23 @@ build_ipk() {
   mkdir -p "$work"/{control,data}
 
   ### data tree
+  # Ship tailscaled plus the `tailscale` CLI symlink (relative target), matching
+  # the official OpenWRT packager's `$(LN) tailscaled $(1)/usr/sbin/tailscale`.
+  # Shipping it in the payload (not postinst) lets opkg track/remove it and keeps
+  # the CLI present even in offline image-builder installs (IPKG_NO_SCRIPT=1).
   mkdir -p "$work/data/usr/sbin"
   install -m755 "$binary" "$work/data/usr/sbin/tailscaled"
+  ln -s tailscaled "$work/data/usr/sbin/tailscale"
 
-  # init script (procd)
+  # init script (procd) — files/tailscale.init (OpenWRT official packager)
   mkdir -p "$work/data/etc/init.d"
-  cat > "$work/data/etc/init.d/tailscale" <<'INITEOF'
-#!/bin/sh /etc/rc.common
+  install -m755 "$SCRIPT_DIR/files/tailscale.init" "$work/data/etc/init.d/tailscale"
 
-START=99
-STOP=10
-USE_PROCD=1
-
-start_service() {
-    local state_dir
-    config_load tailscale
-    config_get state_dir settings state_dir "/var/lib/tailscale"
-    mkdir -p "$state_dir"
-
-    procd_open_instance
-    procd_set_param command /usr/sbin/tailscaled
-    procd_append_param command --state "${state_dir}/tailscaled.state"
-    procd_append_param command --socket "${state_dir}/tailscaled.sock"
-    procd_set_param respawn
-    procd_set_param stdout 1
-    procd_set_param stderr 1
-    procd_close_instance
-}
-
-stop_service() {
-    /usr/sbin/tailscale down 2>/dev/null || true
-}
-INITEOF
-  chmod 755 "$work/data/etc/init.d/tailscale"
-
-  # UCI config
+  # UCI config — files/tailscale.conf (OpenWRT official packager)
   mkdir -p "$work/data/etc/config"
-  cat > "$work/data/etc/config/tailscale" <<'CONFEOF'
-config settings 'settings'
-    option state_dir '/var/lib/tailscale'
-CONFEOF
+  install -m644 "$SCRIPT_DIR/files/tailscale.conf" "$work/data/etc/config/tailscale"
 
-  ### control metadata
+  ### control metadata — files/control.template with @PLACEHOLDER@ substitution
   local installed_size
   installed_size="$(stat -f%z "$binary" 2>/dev/null || stat -c%s "$binary")"
   cat > "$work/control/control" <<EOF
@@ -116,38 +91,21 @@ Package: ${pkg_name}
 Version: ${VERSION}
 Architecture: ${arch_label}
 Maintainer: auto-build
-Description: Tailscale VPN combined binary (${arch_label}) built with aggressive ts_omit and UPX compression.
+Description: Tailscale VPN combined binary (${arch_label}) built with aggressive omitting and compression.
 Installed-Size: ${installed_size}
 Depends: libc, ca-bundle, kmod-tun
-Provides: tailscale tailscaled
+Provides: tailscaled
 Section: net
 Priority: optional
 EOF
 
   # Declare /etc/config/tailscale a conffile so opkg preserves a user's edits
   # on upgrade instead of clobbering (or losing) it.
-  printf '/etc/config/tailscale\n' > "$work/control/conffiles"
+  install -m644 "$SCRIPT_DIR/files/tailscale.conffiles" "$work/control/conffiles"
 
-  # Use OpenWRT's default_postinst/default_prerm helpers (enable/disable+stop the
-  # init script, process conffiles). Create the CLI symlink here, remove in prerm.
-  cat > "$work/control/postinst" <<'EOF'
-#!/bin/sh
-[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
-[ -s "${IPKG_INSTROOT}/lib/functions.sh" ] || exit 0
-. "${IPKG_INSTROOT}/lib/functions.sh"
-ln -fs tailscaled "${IPKG_INSTROOT}/usr/sbin/tailscale"
-default_postinst "$0" "$@"
-EOF
-  chmod 755 "$work/control/postinst"
-
-  cat > "$work/control/prerm" <<'EOF'
-#!/bin/sh
-[ -s "${IPKG_INSTROOT}/lib/functions.sh" ] || exit 0
-. "${IPKG_INSTROOT}/lib/functions.sh"
-rm -f "${IPKG_INSTROOT}/usr/sbin/tailscale"
-default_prerm "$0" "$@"
-EOF
-  chmod 755 "$work/control/prerm"
+  # OpenWRT default_postinst/default_prerm helpers + the CLI symlink lifecycle.
+  install -m755 "$SCRIPT_DIR/files/tailscale.postinst" "$work/control/postinst"
+  install -m755 "$SCRIPT_DIR/files/tailscale.prerm"    "$work/control/prerm"
 
   # Assemble .ipk. OpenWRT's .ipk is a gzipped TAR (not an `ar` archive); opkg
   # reads the data filelist from this format. All members owned by root:root.
@@ -171,7 +129,7 @@ EOF
 for spec in "${TARGETS[@]}"; do
   parse_arch "$spec"
   echo ""
-  echo "━━━ Packaging ${_ARCH_LABEL} ━━━"
+  echo "--- Packaging ${_ARCH_LABEL} ---"
   build_ipk "$_ARCH_LABEL"
 done
 
@@ -187,7 +145,7 @@ for spec in "${TARGETS[@]}"; do
         [ -f "$ipk" ] || continue
         # .ipk is a gzipped tar; pull control.tar.gz out, then ./control from it.
         tar -xzOf "$ipk" ./control.tar.gz 2>/dev/null | tar -xzO ./control 2>/dev/null || \
-        tar -xzOf "$ipk" control.tar.gz    2>/dev/null | tar -xzO control
+        tar -xzOf "$ipk" control.tar.gz 2>/dev/null | tar -xzO control
         echo "Filename: $ipk"
         echo "Size: $(stat -f%z "$ipk" 2>/dev/null || stat -c%s "$ipk")"
         echo "SHA256sum: $(sha256 "$ipk")"

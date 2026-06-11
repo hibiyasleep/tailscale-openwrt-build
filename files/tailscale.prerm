@@ -1,0 +1,7 @@
+#!/bin/sh
+# OpenWRT's auto-generated default prerm: source functions.sh and call
+# default_prerm, which disables + stops the /etc/init.d/tailscale service.
+# The `tailscale` CLI symlink ships in the data tree, so opkg removes it.
+[ -s "${IPKG_INSTROOT}/lib/functions.sh" ] || exit 0
+. "${IPKG_INSTROOT}/lib/functions.sh"
+default_prerm "$0" "$@"

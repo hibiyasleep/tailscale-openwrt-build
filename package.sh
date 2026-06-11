@@ -48,17 +48,8 @@ build_ipk() {
   local control="$work/control"
   local data="$work/data"
 
-  ### data tree
-  # tailscaled plus the `tailscale` CLI as a relative symlink (matching the
-  # official OpenWRT packager). Shipping the symlink in the payload (not via
-  # postinst) lets opkg track/remove it and keeps the CLI present even for
-  # offline image-builder installs (IPKG_NO_SCRIPT=1).
-  mkdir -p "$data/usr/sbin" "$data/etc/init.d" "$data/etc/config"
-  install -m755 "$binary" "$data/usr/sbin/tailscaled"
-  ln -s tailscaled "$data/usr/sbin/tailscale"
-
-  install -m755 "$SCRIPT_DIR/files/tailscale.init" "$data/etc/init.d/tailscale"
-  install -m644 "$SCRIPT_DIR/files/tailscale.conf" "$data/etc/config/tailscale"
+  ### data tree (shared layout; see stage_payload in lib.sh)
+  stage_payload "$binary" "$data"
 
   ### control tree
   cat > "$work/control/control" <<EOF

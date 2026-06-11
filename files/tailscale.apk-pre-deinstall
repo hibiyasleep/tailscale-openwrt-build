@@ -1,0 +1,12 @@
+#!/bin/sh
+# apk pre-deinstall hook (OpenWRT 25+, apk-tools 3).
+#
+# Stop and disable the service before its files are removed. Mirrors the .ipk
+# path's default_prerm. `stop` is best-effort (silently skipped when procd is
+# not running); `disable` removes the /etc/rc.d boot symlink. The `tailscale`
+# CLI symlink ships in the payload, so apk removes it with the package.
+if [ -x /etc/init.d/tailscale ]; then
+	/etc/init.d/tailscale stop 2>/dev/null
+	/etc/init.d/tailscale disable
+fi
+exit 0

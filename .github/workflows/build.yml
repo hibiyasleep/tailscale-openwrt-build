@@ -117,6 +117,19 @@ jobs:
           sudo install -m755 /tmp/usign/build/usign /usr/local/bin/usign
           command -v usign
 
+      - name: Build apk-tools 3 (apk mkpkg / mkndx for OpenWRT 25)
+        run: |
+          # apk-tools 3 isn't packaged for Ubuntu; build it from source. zstd/lua/
+          # docs are optional and auto-disable when their deps are absent, so only
+          # openssl + zlib are needed. fakeroot lets mkpkg record root:root owners.
+          sudo apt-get install -y meson ninja-build pkg-config libssl-dev zlib1g-dev fakeroot
+          git clone --depth=1 --branch v3.0.6 https://github.com/alpinelinux/apk-tools.git /tmp/apk-tools
+          cd /tmp/apk-tools
+          meson setup build -Dprefix=/usr/local
+          ninja -C build src/apk
+          sudo install -m755 build/src/apk /usr/local/bin/apk
+          apk --version
+
       - name: Write feed signing key
         id: signkey
         env:
@@ -131,6 +144,20 @@ jobs:
             echo "path=" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Write apk feed signing key
+        id: apksignkey
+        env:
+          APK_SIGN_KEY: ${{ secrets.APK_SIGN_KEY }}
+        run: |
+          if [ -n "$APK_SIGN_KEY" ]; then
+            printf '%s\n' "$APK_SIGN_KEY" > "$RUNNER_TEMP/tailscale-apk.sec"
+            chmod 600 "$RUNNER_TEMP/tailscale-apk.sec"
+            echo "path=$RUNNER_TEMP/tailscale-apk.sec" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::APK_SIGN_KEY secret not set — apk feed index will be UNSIGNED."
+            echo "path=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Override version from workflow input
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.tailscale_version != ''
         run: |
@@ -141,12 +168,19 @@ jobs:
           chmod +x build.sh
           ./build.sh "${{ matrix.arch }}"
 
-      - name: Package .ipk
+      - name: Package .ipk (OpenWRT ≤24)
         env:
           USIGN_SEC: ${{ steps.signkey.outputs.path }}
         run: |
           chmod +x package.sh
           ./package.sh "${{ matrix.arch }}"
+
+      - name: Package .apk (OpenWRT 25+)
+        env:
+          APK_SIGN_KEY: ${{ steps.apksignkey.outputs.path }}
+        run: |
+          chmod +x package-apk.sh
+          ./package-apk.sh "${{ matrix.arch }}"
 
       - name: Sanitize arch for artifact name
         id: safe
@@ -177,6 +211,16 @@ jobs:
       - name: Create GitHub Release
         run: |
           TAG="build-${{ needs.prepare.outputs.version }}"
+          # Collect .apk packages from the feed tree, renaming each with its arch
+          # so the release assets don't collide (the in-feed name omits arch).
+          shopt -s nullglob
+          apks=()
+          for f in feed/packages/*/tailscale-*.apk; do
+            arch="$(basename "$(dirname "$f")")"
+            dest="$(basename "$f" .apk)_${arch}.apk"
+            cp "$f" "$dest"
+            apks+=("$dest")
+          done
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Tailscale ${{ needs.prepare.outputs.version }}" \
@@ -184,12 +228,13 @@ jobs:
 
           Architectures: $(echo '${{ needs.prepare.outputs.matrix }}' | jq -r 'join(", ")')
 
-          Install via opkg feed or download the .ipk directly." \
-            tailscale_*.ipk
+          OpenWRT ≤24 (opkg): add the feed or download a .ipk.
+          OpenWRT 25+ (apk):  add the feed or download a .apk." \
+            tailscale_*.ipk "${apks[@]}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Deploy opkg feed to gh-pages
+      - name: Deploy package feed (opkg + apk) to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

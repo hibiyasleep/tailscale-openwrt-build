@@ -1,22 +1,16 @@
 # tailscale-openwrt-build
 
-Automated, size-optimised [Tailscale](https://tailscale.com) builds for OpenWRT routers.  
-Produces `.ipk` packages with aggressive feature stripping + UPX compression; small enough for devices with small flash.
+Small [Tailscale](https://tailscale.com) `.ipk` builds for OpenWRT routers;
+aggressive feature stripping plus UPX compression to fit devices with little flash.
 
-## Size budget
+A weekly CI job cross-compiles the latest release for several architectures and
+publishes a signed opkg feed to GitHub Pages.
 
-| Stage | Estimated |
-|---|---|
-| Full combined binary (mipsle) | ~25–30 MB |
-| After `-s -w` strip | ~18–22 MB |
-| After aggressive `ts_omit` tags | ~10–14 MB |
-| After UPX `--best --lzma` | **~3–6 MB** |
+## Install on your router
 
-## Quick start — install on your router
-
-1. **Trust the feed signing key**  
-   the opkg index is signed with `usign`. Install the public key so `opkg` can verify it  
-   (stock OpenWRT has `check_signature` enabled by default, and will reject the feed otherwise):
+1. **Trust the feed signing key.** Stock OpenWRT verifies feed signatures, so
+   install the public key first. The file *must* be named after the key's
+   fingerprint:
 
    ```sh
    cat > /etc/opkg/keys/7e4a00c1131ea1d0 <<'EOF'
@@ -25,26 +19,26 @@ Produces `.ipk` packages with aggressive feature stripping + UPX compression; sm
    EOF
    ```
 
-   The file **must** be named after the key's fingerprint (`7e4a00c1131ea1d0`).
-   This is the public half of [`tailscale-feed.pub`](tailscale-feed.pub).
+   Alternatively, you may disable the signature check entirely by setting
+   `option check_signature` to `0` (or removing the line) in `/etc/opkg.conf`;
+   simpler, but the feed is then unverified.
 
-2. **Add the feed**  
-   edit `/etc/opkg/customfeeds.conf`:
+2. **Add the feed** to `/etc/opkg/customfeeds.conf`, using your device's arch
+   (run `opkg print-architecture` to find it):
 
    ```
    src/gz tailscale https://hibiyasleep.github.io/tailscale-openwrt-build/packages/mipsel_24kc
    ```
 
-   Replace `mipsel_24kc` with your device's architecture — run `opkg print-architecture`
-   on the router to see what it accepts (see [Architectures](#architectures)).
+3. **Install:**
 
-3. **Install:**  
    ```sh
    opkg update
    opkg install tailscale
    ```
 
-4. **Start & authenticate:**  
+4. **Start and authenticate:**
+
    ```sh
    /etc/init.d/tailscale enable
    /etc/init.d/tailscale start
@@ -53,95 +47,61 @@ Produces `.ipk` packages with aggressive feature stripping + UPX compression; sm
 
 ## Configuration
 
-Everything lives in [`build.conf`](build.conf):
+Everything is driven by [`build.conf`](build.conf):
 
 | Variable | Purpose |
 |---|---|
 | `TAILSCALE_VERSION` | `"latest"` (auto-detect) or a pinned tag like `"v1.78.1"` |
-| `ARCHITECTURES` | List of OpenWRT/opkg arch names (e.g. `mipsel_24kc`) |
-| `OMIT_TAGS` | Features to strip via `ts_omit_*` build tags |
-| `INCLUDE_TAGS` | Extra build tags (default: `ts_include_cli` for combined binary) |
+| `ARCHITECTURES` | opkg arch names to build (e.g. `mipsel_24kc`) |
+| `FEATURES` | Tailscale features to **keep**; everything else is stripped |
 | `UPX_ENABLED` | `"true"` / `"false"` |
 
-### Feature tags
+**Architectures** are the names `opkg print-architecture` reports on the device;
+they must match exactly or opkg rejects the package. The Go toolchain settings
+(`GOARCH`/`GOMIPS`/`GOARM`) are derived from each name in `build.sh`. The feed
+path always equals the arch name (`packages/<arch>`).
 
-The `OMIT_TAGS` list controls which Tailscale features are compiled out.  
-Comment out a tag to **re-enable** that feature. The defaults are aggressive — suited for a headless router that only needs VPN routing.
-
-| On by default | Off by default |
-| ------------- | -------------- |
-| `dns`, `netstack`, `osrouter`, `health`, `advertiseroutes`, `useroutes`, `useexitnode`, `portmapper`, `logtail`, `c2n`, `captiveportal`, `iptables` | `ssh`, `serve`, `drive`, `taildrop`, `kube`, `aws`, `bird`, `synology`, `doctor`, `debug`, `debugeventbus`, `debugportmapper`, `tpm`, `posture`, `systray`, `qrcodes`, `webclient`, `tap`, `relayserver`, `wakeonlan`, `colorable`, `completion`, `completion_scripts`, `capture`, `desktop_sessions`, `identityfederation`, `oauthkey`, `outboundproxy`, `acme`, `ace`, `conn25`, `cloud`, `netlog`, `hujsonconf`, `linkspeed`, `networkmanager`, `resolved`, `sdnotify`, `webbrowser`, `usermetrics`, `clientmetrics`, `clientupdate`, `appconnectors`, `tailnetlock`, `bakedroots`, `peerapiclient`, `peerapiserver`, `cachenetmap`, `lazywg`, `linuxdnsfight`, `listenrawdisco`, `syspolicy`, `unixsocketidentity`, `useproxy`, `gro`, `portlist`, `dbus` |
-
-### Architectures
-
-Controlled by the `ARCHITECTURES` array in [`build.conf`](build.conf) — just list the
-**OpenWRT/opkg architecture names**. The Go toolchain settings (`GOARCH`/`GOMIPS`/`GOARM`)
-are derived from each name in `build.sh`, since opkg names are more specific than Go's.
-
-Get the exact name your device accepts by running on the router:
-
-```sh
-opkg print-architecture
-```
-
-The arch name must match, or opkg rejects the package as having "no valid architecture".
-
-| opkg arch | Target | Feed path |
-| --------- | ------ | --------- |
-| `mipsel_24kc` | ramips (mt7621/mt7620/mt76x8/rt305x) | `packages/mipsel_24kc` |
-| `mips_24kc` | big-endian MIPS (ath79/lantiq) | `packages/mips_24kc` |
-| `arm_cortex-a7_neon-vfpv4` | ARMv7 Cortex-A7 (ipq40xx, sunxi, …) | `packages/arm_cortex-a7_neon-vfpv4` |
-| `aarch64_cortex-a53` | AArch64 Cortex-A53 (mt7622, bcm27xx, …) | `packages/aarch64_cortex-a53` |
-| `x86_64` | x86-64 | `packages/x86_64` |
-
-ARM/AArch64 names vary by CPU/subtarget — the feed path always equals the arch name.
+**Features** is a keep-list: the build passes it to Tailscale's `cmd/featuretags`
+tool with `--min --add`, compiling out everything except the listed features and
+their dependencies. The defaults target a headless router (subnet routing, exit
+nodes, MagicDNS). `osrouter` and `iptables` are mandatory; without them
+`tailscaled` can't program the routing table, and MIPS has no nftables backend.
+See the comments in `build.conf` for the full annotated list.
 
 ## Local builds
 
 ```sh
-# Build all enabled architectures
-./build.sh
-
-# Build a single target
-./build.sh mipsel_24kc
-
-# Package all
-./package.sh
-
-# Package a single target
-./package.sh mipsel_24kc
+./build.sh                 # build all architectures in build.conf
+./build.sh mipsel_24kc     # build one
+./package.sh               # package all into .ipk + feed index
+./package.sh mipsel_24kc   # package one
 ```
 
-Requires: Go 1.22+, `git`, `curl`, `jq`, `ar`, and optionally `upx`.
+Requires Go 1.22+, `git`, `curl`, `jq`, and optionally `upx`. To sign the feed
+locally, point `USIGN_SEC` at a `usign` secret-key file; otherwise the feed is
+left unsigned.
 
-## CI workflow
+## CI
 
-The [GitHub Actions workflow](.github/workflows/build.yml) has three jobs:
-
-1. **`prepare`** — resolves the Tailscale version, checks for existing release, generates the architecture matrix from `build.conf`.
-2. **`build`** — matrix job: one parallel runner per architecture. Compiles, compresses, packages `.ipk`, signs the feed index, uploads artifacts.
-3. **`release`** — collects all `.ipk` artifacts, creates a GitHub Release, deploys the opkg feed to `gh-pages`.
+[`.github/workflows/build.yml`](.github/workflows/build.yml) runs weekly (and on
+demand) in three jobs: **prepare** resolves the version and builds the arch
+matrix from `build.conf`; **build** compiles, compresses, and packages each arch
+in parallel; **release** publishes a GitHub Release and deploys the opkg feed to
+`gh-pages`. Manual runs (Actions → *Run workflow*) can pin a version and pick a
+mode (*Normal* / *Test* / *Re-release*).
 
 ### Feed signing
 
-The opkg index (`Packages`) is signed with [`usign`](https://git.openwrt.org/?p=project/usign.git)
-to produce `Packages.sig`, which `opkg` verifies on the router.
-
-- **Public key:** [`tailscale-feed.pub`](tailscale-feed.pub) (keynum `7e4a00c1131ea1d0`), committed and shipped to users — see [Quick start](#quick-start--install-on-your-router).
-- **Private key:** stored as the repository secret **`USIGN_SECRET_KEY`** (the full contents of the `.sec` file). Never commit it; `*.sec` is git-ignored.
-
-If the secret is absent (e.g. a fork), the build still succeeds but emits an **unsigned** feed and a CI warning. To rotate the key: `usign -G -s new.sec -p new.pub`, replace `tailscale-feed.pub` + the README keynum, update the `USIGN_SECRET_KEY` secret, and have users reinstall the public key.
-
-Trigger a manual build from the Actions tab — you can optionally pin a version:
-
-> Actions → Build Tailscale for OpenWRT → Run workflow → `tailscale_version: v1.78.1`
+The opkg index is signed with [`usign`](https://git.openwrt.org/?p=project/usign.git).
+The public key ([`tailscale-feed.pub`](tailscale-feed.pub), keynum
+`7e4a00c1131ea1d0`) is committed and shipped to users; the private key lives in
+the `USIGN_SECRET_KEY` repository secret. Without it the build still succeeds but
+emits an unsigned feed. To rotate: `usign -G -s new.sec -p new.pub`, then update
+`tailscale-feed.pub`, the keynum above, and the secret.
 
 ## Credits
 
-Inspired by [du-cki/openwrt-tailscale](https://github.com/du-cki/openwrt-tailscale) and [lanrat/openwrt-tailscale-repo](https://github.com/lanrat/openwrt-tailscale-repo).
-
-## License
-
-The build scripts in this repository are provided as-is.  
-Tailscale itself is licensed under the [BSD 3-Clause License](https://github.com/tailscale/tailscale/blob/main/LICENSE).
-
+Inspired by [du-cki/openwrt-tailscale](https://github.com/du-cki/openwrt-tailscale)
+and [lanrat/openwrt-tailscale-repo](https://github.com/lanrat/openwrt-tailscale-repo).
+Tailscale is licensed under the
+[BSD 3-Clause License](https://github.com/tailscale/tailscale/blob/main/LICENSE).

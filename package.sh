@@ -1,26 +1,25 @@
 #!/usr/bin/env bash
 # package.sh [OPKG_ARCH ...]   e.g. ./package.sh mipsel_24kc
-# Packages tailscale combined binaries into .ipk files and generates the opkg feed.
-# With no arguments, packages all ARCHITECTURES defined in build.conf.
+# Packages each prebuilt tailscale binary into an .ipk and (re)generates the
+# per-arch opkg feed index. With no arguments, packages every arch in build.conf.
+
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/build.conf"
-
-# Optional opkg feed signing. Point USIGN_SEC at a usign secret-key file to emit
-# a Packages.sig next to each feed index (opkg verifies this when check_signature
-# is enabled). Leave unset for an unsigned local build.
+# Optional opkg feed signing: point USIGN_SEC at a usign secret-key file to emit
+# a Packages.sig beside each feed index (opkg checks it when check_signature is
+# enabled). Leave unset for an unsigned local build.
 USIGN_SEC="${USIGN_SEC:-}"
 
-# All tarballs inside an .ipk must be owned by root:root (numeric), or files
-# land with the build user's uid/gid on the device. GNU and BSD tar differ.
+# Every member of an .ipk's tarballs must be owned by root:root (numeric), or
+# files land under the build user's uid/gid on the device. GNU/BSD tar differ.
 if tar --version 2>/dev/null | grep -q 'GNU tar'; then
   TAR_OPTS="--numeric-owner --owner=0 --group=0"
 else
   TAR_OPTS="--numeric-owner --uid 0 --gid 0"
 fi
 
-# Portable sha256 (sha256sum on Linux/CI, shasum on macOS).
+# Portable helpers (Linux/CI vs macOS).
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'
@@ -28,133 +27,91 @@ sha256() {
     shasum -a 256 "$1" | awk '{print $1}'
   fi
 }
-
-# Resolve version for package metadata
-if [ "$TAILSCALE_VERSION" = "latest" ]; then
-  TAILSCALE_VERSION="$(curl -fsSL https://api.github.com/repos/tailscale/tailscale/releases/latest | jq -r .tag_name)"
-fi
-VERSION="${TAILSCALE_VERSION#v}"
-
-### Which architectures?
-if [ $# -gt 0 ]; then
-  TARGETS=("$@")
-else
-  TARGETS=("${ARCHITECTURES[@]}")
-fi
-
-### Helper: the opkg arch name is the label verbatim
-# It ends up in the .ipk filename, the control "Architecture:" field, the feed
-# path, and must match `opkg print-architecture` on the device.
-parse_arch() {
-  _ARCH_LABEL="$1"
+filesize() {
+  stat -f%z "$1" 2>/dev/null || stat -c%s "$1"
 }
 
-### Helper: build one .ipk
+### Package one arch's binary into an .ipk and stage it into the feed tree.
 build_ipk() {
-  local arch_label="$1"
-  local binary="$SCRIPT_DIR/tailscale.combined.${arch_label}"
-
+  local arch="$1"
+  local binary="$SCRIPT_DIR/tailscale.combined.${arch}"
   if [ ! -f "$binary" ]; then
     echo "SKIP: $binary not found (run build.sh first)" >&2
     return 1
   fi
 
-  local pkg_name="tailscale"
-  local ipk_file="$SCRIPT_DIR/${pkg_name}_${VERSION}_${arch_label}.ipk"
-  local work="$SCRIPT_DIR/_ipk-work-${arch_label}"
-
+  local ipk="$SCRIPT_DIR/tailscale_${VERSION}_${arch}.ipk"
+  local work="$SCRIPT_DIR/_ipk-work-${arch}"
   rm -rf "$work"
   mkdir -p "$work"/{control,data}
 
+  local control="$work/control"
+  local data="$work/data"
+
   ### data tree
-  # Ship tailscaled plus the `tailscale` CLI symlink (relative target), matching
-  # the official OpenWRT packager's `$(LN) tailscaled $(1)/usr/sbin/tailscale`.
-  # Shipping it in the payload (not postinst) lets opkg track/remove it and keeps
-  # the CLI present even in offline image-builder installs (IPKG_NO_SCRIPT=1).
-  mkdir -p "$work/data/usr/sbin"
-  install -m755 "$binary" "$work/data/usr/sbin/tailscaled"
-  ln -s tailscaled "$work/data/usr/sbin/tailscale"
+  # tailscaled plus the `tailscale` CLI as a relative symlink (matching the
+  # official OpenWRT packager). Shipping the symlink in the payload (not via
+  # postinst) lets opkg track/remove it and keeps the CLI present even for
+  # offline image-builder installs (IPKG_NO_SCRIPT=1).
+  mkdir -p "$data/usr/sbin" "$data/etc/init.d" "$data/etc/config"
+  install -m755 "$binary" "$data/usr/sbin/tailscaled"
+  ln -s tailscaled "$data/usr/sbin/tailscale"
 
-  # init script (procd) — files/tailscale.init (OpenWRT official packager)
-  mkdir -p "$work/data/etc/init.d"
-  install -m755 "$SCRIPT_DIR/files/tailscale.init" "$work/data/etc/init.d/tailscale"
+  install -m755 "$SCRIPT_DIR/files/tailscale.init" "$data/etc/init.d/tailscale"
+  install -m644 "$SCRIPT_DIR/files/tailscale.conf" "$data/etc/config/tailscale"
 
-  # UCI config — files/tailscale.conf (OpenWRT official packager)
-  mkdir -p "$work/data/etc/config"
-  install -m644 "$SCRIPT_DIR/files/tailscale.conf" "$work/data/etc/config/tailscale"
-
-  ### control metadata — files/control.template with @PLACEHOLDER@ substitution
-  local installed_size
-  installed_size="$(stat -f%z "$binary" 2>/dev/null || stat -c%s "$binary")"
+  ### control tree
   cat > "$work/control/control" <<EOF
-Package: ${pkg_name}
+Package: tailscale
 Version: ${VERSION}
-Architecture: ${arch_label}
+Architecture: ${arch}
 Maintainer: auto-build
-Description: Tailscale VPN combined binary (${arch_label}) built with aggressive omitting and compression.
-Installed-Size: ${installed_size}
+Description: Tailscale VPN combined binary (${arch}) built with aggressive omitting and compression.
+Installed-Size: $(filesize "$binary")
 Depends: libc, ca-bundle, kmod-tun
 Provides: tailscaled
 Section: net
 Priority: optional
 EOF
 
-  # Declare /etc/config/tailscale a conffile so opkg preserves a user's edits
-  # on upgrade instead of clobbering (or losing) it.
-  install -m644 "$SCRIPT_DIR/files/tailscale.conffiles" "$work/control/conffiles"
+  install -m644 "$SCRIPT_DIR/files/tailscale.conffiles" "$control/conffiles"
+  install -m755 "$SCRIPT_DIR/files/tailscale.postinst" "$control/postinst"
+  install -m755 "$SCRIPT_DIR/files/tailscale.prerm"    "$control/prerm"
 
-  # OpenWRT default_postinst/default_prerm helpers + the CLI symlink lifecycle.
-  install -m755 "$SCRIPT_DIR/files/tailscale.postinst" "$work/control/postinst"
-  install -m755 "$SCRIPT_DIR/files/tailscale.prerm"    "$work/control/prerm"
-
-  # Assemble .ipk. OpenWRT's .ipk is a gzipped TAR (not an `ar` archive); opkg
-  # reads the data filelist from this format. All members owned by root:root.
+  ### assemble
+  # an OpenWRT .ipk is a gzipped tar (not an `ar` archive), every member owned by root:root.
   echo "2.0" > "$work/debian-binary"
-  (cd "$work/control" && tar $TAR_OPTS -czf "$work/control.tar.gz" ./*)
-  (cd "$work/data"    && tar $TAR_OPTS -czf "$work/data.tar.gz" ./*)
-
-  rm -f "$ipk_file"
-  (cd "$work" && tar $TAR_OPTS -czf "$ipk_file" ./debian-binary ./control.tar.gz ./data.tar.gz)
-  echo "Created: $ipk_file ($(ls -lh "$ipk_file" | awk '{print $5}'))"
-
-  # Copy into per-arch feed dir
-  local feed_dir="$SCRIPT_DIR/feed/packages/${arch_label}"
-  mkdir -p "$feed_dir"
-  cp "$ipk_file" "$feed_dir/"
-
+  (cd "$control" && tar $TAR_OPTS -czf "$work/control.tar.gz" ./*)
+  (cd "$data"    && tar $TAR_OPTS -czf "$work/data.tar.gz" ./*)
+  rm -f "$ipk"
+  (cd "$work" && tar $TAR_OPTS -czf "$ipk" ./debian-binary ./control.tar.gz ./data.tar.gz)
   rm -rf "$work"
+
+  mkdir -p "$SCRIPT_DIR/feed/packages/${arch}"
+  cp "$ipk" "$SCRIPT_DIR/feed/packages/${arch}/"
+  echo "Created: $ipk ($(ls -lh "$ipk" | awk '{print $5}'))"
 }
 
-### Build .ipk for each arch
-for spec in "${TARGETS[@]}"; do
-  parse_arch "$spec"
-  echo ""
-  echo "--- Packaging ${_ARCH_LABEL} ---"
-  build_ipk "$_ARCH_LABEL"
-done
-
-# Generate opkg feed index (per-arch)
-for spec in "${TARGETS[@]}"; do
-  parse_arch "$spec"
-  feed_dir="$SCRIPT_DIR/feed/packages/${_ARCH_LABEL}"
-  [ -d "$feed_dir" ] || continue
+### (Re)generate one arch's opkg Packages index, signing it when USIGN_SEC is set.
+index_feed() {
+  local feed_dir="$SCRIPT_DIR/feed/packages/$1"
+  [ -d "$feed_dir" ] || return 0
   (
     cd "$feed_dir"
     {
       for ipk in *.ipk; do
         [ -f "$ipk" ] || continue
-        # .ipk is a gzipped tar; pull control.tar.gz out, then ./control from it.
+        # .ipk is a gzipped tar: pull control.tar.gz out, then ./control from it.
         tar -xzOf "$ipk" ./control.tar.gz 2>/dev/null | tar -xzO ./control 2>/dev/null || \
         tar -xzOf "$ipk" control.tar.gz 2>/dev/null | tar -xzO control
         echo "Filename: $ipk"
-        echo "Size: $(stat -f%z "$ipk" 2>/dev/null || stat -c%s "$ipk")"
+        echo "Size: $(filesize "$ipk")"
         echo "SHA256sum: $(sha256 "$ipk")"
         echo ""
       done
     } > Packages
     gzip -kf Packages
 
-    ### Sign the (uncompressed) index — opkg verifies Packages.sig after gunzip.
     if [ -n "$USIGN_SEC" ]; then
       if command -v usign >/dev/null 2>&1; then
         usign -S -m Packages -s "$USIGN_SEC" -x Packages.sig
@@ -165,6 +122,12 @@ for spec in "${TARGETS[@]}"; do
     fi
   )
   echo "Feed index: $feed_dir/Packages"
+}
+
+for arch in "${TARGETS[@]}"; do
+  echo ""
+  echo "--- Packaging ${arch} ---"
+  build_ipk "$arch" && index_feed "$arch"
 done
 
 echo ""

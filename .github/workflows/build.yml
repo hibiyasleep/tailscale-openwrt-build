@@ -27,7 +27,7 @@ env:
   # binaries) and the build job (which restores them). Bump TOOLS_CACHE_REV to
   # force a rebuild; change APK_TOOLS_REF to pull a different apk-tools release.
   APK_TOOLS_REF: v3.0.6
-  TOOLS_CACHE_REV: '1'
+  TOOLS_CACHE_REV: '2'
 
 jobs:
   # --- Resolve version & build matrix
@@ -53,7 +53,7 @@ jobs:
         run: |
           # Built once here and cached as binaries; every per-arch build job then
           # restores them from cache instead of rebuilding for each architecture.
-          mkdir -p "$GITHUB_WORKSPACE/tools-bin"
+          mkdir -p "$GITHUB_WORKSPACE/tools-bin/lib"
           sudo apt-get update
           sudo apt-get install -y cmake meson ninja-build pkg-config libssl-dev zlib1g-dev
 
@@ -69,6 +69,10 @@ jobs:
           git clone --depth=1 --branch "$APK_TOOLS_REF" https://github.com/alpinelinux/apk-tools.git /tmp/apk-tools
           ( cd /tmp/apk-tools && meson setup build -Dprefix=/usr/local && ninja -C build src/apk )
           install -m755 /tmp/apk-tools/build/src/apk "$GITHUB_WORKSPACE/tools-bin/apk"
+          # The apk binary links against apk-tools' own libapk.so.3.x, so cache the
+          # shared lib too (preserving the soname symlinks) — the binary alone fails
+          # at load with "libapk.so.3.0.0: cannot open shared object file".
+          cp -a /tmp/apk-tools/build/src/libapk.so* "$GITHUB_WORKSPACE/tools-bin/lib/"
 
       - name: Override version from workflow input
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.tailscale_version != ''
@@ -158,6 +162,9 @@ jobs:
           # root:root ownership in the .apk payload), not a build dep, so it stays.
           sudo install -m755 tools-bin/usign /usr/local/bin/usign
           sudo install -m755 tools-bin/apk   /usr/local/bin/apk
+          # apk needs its shared lib (libapk.so.3.x) on the loader path.
+          sudo cp -a tools-bin/lib/libapk.so* /usr/local/lib/
+          sudo ldconfig
           sudo apt-get update && sudo apt-get install -y fakeroot
           command -v usign
           apk --version

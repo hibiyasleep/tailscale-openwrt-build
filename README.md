@@ -64,8 +64,10 @@ path always equals the arch name (`packages/<arch>`).
 **Features** is a keep-list: the build passes it to Tailscale's `cmd/featuretags`
 tool with `--min --add`, compiling out everything except the listed features and
 their dependencies. The defaults target a headless router (subnet routing, exit
-nodes, MagicDNS). `osrouter` and `iptables` are mandatory; without them
-`tailscaled` can't program the routing table, and MIPS has no nftables backend.
+nodes, MagicDNS). `osrouter`, `iptables`, and `unixsocketidentity` are mandatory:
+without the first two `tailscaled` can't program the routing table (and MIPS has no
+nftables backend), and without `unixsocketidentity` the LocalAPI denies every
+request, so `tailscale up` fails with `Access denied: status access denied`.
 See the comments in `build.conf` for the full annotated list.
 
 ## Local builds

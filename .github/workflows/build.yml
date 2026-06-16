@@ -22,6 +22,13 @@ permissions:
   pages: write
   id-token: write
 
+env:
+  # Build-tool versions shared by the prepare job (which builds and caches the
+  # binaries) and the build job (which restores them). Bump TOOLS_CACHE_REV to
+  # force a rebuild; change APK_TOOLS_REF to pull a different apk-tools release.
+  APK_TOOLS_REF: v3.0.6
+  TOOLS_CACHE_REV: '2'
+
 jobs:
   # --- Resolve version & build matrix
   prepare:
@@ -33,6 +40,39 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Cache build tools (usign + apk-tools 3)
+        id: tools-cache
+        uses: actions/cache@v4
+        with:
+          path: tools-bin
+          key: tools-${{ runner.os }}-usign-apk-${{ env.APK_TOOLS_REF }}-r${{ env.TOOLS_CACHE_REV }}
+
+      - name: Build usign + apk-tools 3 (cache miss only)
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: |
+          # Built once here and cached as binaries; every per-arch build job then
+          # restores them from cache instead of rebuilding for each architecture.
+          mkdir -p "$GITHUB_WORKSPACE/tools-bin/lib"
+          sudo apt-get update
+          sudo apt-get install -y cmake meson ninja-build pkg-config libssl-dev zlib1g-dev
+
+          # usign — OpenWRT opkg feed-index signer.
+          git clone --depth=1 https://git.openwrt.org/project/usign.git /tmp/usign
+          cmake -S /tmp/usign -B /tmp/usign/build
+          cmake --build /tmp/usign/build
+          install -m755 /tmp/usign/build/usign "$GITHUB_WORKSPACE/tools-bin/usign"
+
+          # apk-tools 3 — provides `apk mkpkg` / `apk mkndx` for OpenWRT 25 .apk.
+          # zstd/lua/docs are optional and auto-disable when their deps are absent,
+          # so only openssl + zlib are needed.
+          git clone --depth=1 --branch "$APK_TOOLS_REF" https://github.com/alpinelinux/apk-tools.git /tmp/apk-tools
+          ( cd /tmp/apk-tools && meson setup build -Dprefix=/usr/local && ninja -C build src/apk )
+          install -m755 /tmp/apk-tools/build/src/apk "$GITHUB_WORKSPACE/tools-bin/apk"
+          # The apk binary links against apk-tools' own libapk.so.3.x, so cache the
+          # shared lib too (preserving the soname symlinks) — the binary alone fails
+          # at load with "libapk.so.3.0.0: cannot open shared object file".
+          cp -a /tmp/apk-tools/build/src/libapk.so* "$GITHUB_WORKSPACE/tools-bin/lib/"
 
       - name: Override version from workflow input
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.tailscale_version != ''
@@ -108,14 +148,26 @@ jobs:
       - name: Install UPX
         run: sudo apt-get update && sudo apt-get install -y upx-ucl
 
-      - name: Build usign (OpenWRT feed signer)
+      - name: Restore build tools (usign + apk-tools 3)
+        uses: actions/cache/restore@v4
+        with:
+          path: tools-bin
+          key: tools-${{ runner.os }}-usign-apk-${{ env.APK_TOOLS_REF }}-r${{ env.TOOLS_CACHE_REV }}
+          fail-on-cache-miss: true
+
+      - name: Install build tools
         run: |
-          sudo apt-get install -y cmake
-          git clone --depth=1 https://git.openwrt.org/project/usign.git /tmp/usign
-          cmake -S /tmp/usign -B /tmp/usign/build
-          cmake --build /tmp/usign/build
-          sudo install -m755 /tmp/usign/build/usign /usr/local/bin/usign
+          # usign + apk were built and cached by the prepare job; install them
+          # onto PATH here. fakeroot is a runtime dep of package-apk.sh (it records
+          # root:root ownership in the .apk payload), not a build dep, so it stays.
+          sudo install -m755 tools-bin/usign /usr/local/bin/usign
+          sudo install -m755 tools-bin/apk   /usr/local/bin/apk
+          # apk needs its shared lib (libapk.so.3.x) on the loader path.
+          sudo cp -a tools-bin/lib/libapk.so* /usr/local/lib/
+          sudo ldconfig
+          sudo apt-get update && sudo apt-get install -y fakeroot
           command -v usign
+          apk --version
 
       - name: Write feed signing key
         id: signkey
@@ -131,6 +183,20 @@ jobs:
             echo "path=" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Write apk feed signing key
+        id: apksignkey
+        env:
+          APK_SIGN_KEY: ${{ secrets.APK_SIGN_KEY }}
+        run: |
+          if [ -n "$APK_SIGN_KEY" ]; then
+            printf '%s\n' "$APK_SIGN_KEY" > "$RUNNER_TEMP/tailscale-apk.sec"
+            chmod 600 "$RUNNER_TEMP/tailscale-apk.sec"
+            echo "path=$RUNNER_TEMP/tailscale-apk.sec" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::APK_SIGN_KEY secret not set — apk feed index will be UNSIGNED."
+            echo "path=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Override version from workflow input
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.tailscale_version != ''
         run: |
@@ -141,12 +207,19 @@ jobs:
           chmod +x build.sh
           ./build.sh "${{ matrix.arch }}"
 
-      - name: Package .ipk
+      - name: Package .ipk (OpenWRT ≤24)
         env:
           USIGN_SEC: ${{ steps.signkey.outputs.path }}
         run: |
           chmod +x package.sh
           ./package.sh "${{ matrix.arch }}"
+
+      - name: Package .apk (OpenWRT 25+)
+        env:
+          APK_SIGN_KEY: ${{ steps.apksignkey.outputs.path }}
+        run: |
+          chmod +x package-apk.sh
+          ./package-apk.sh "${{ matrix.arch }}"
 
       - name: Sanitize arch for artifact name
         id: safe
@@ -177,6 +250,16 @@ jobs:
       - name: Create GitHub Release
         run: |
           TAG="build-${{ needs.prepare.outputs.version }}"
+          # Collect .apk packages from the feed tree, renaming each with its arch
+          # so the release assets don't collide (the in-feed name omits arch).
+          shopt -s nullglob
+          apks=()
+          for f in feed/packages/*/tailscale-*.apk; do
+            arch="$(basename "$(dirname "$f")")"
+            dest="$(basename "$f" .apk)_${arch}.apk"
+            cp "$f" "$dest"
+            apks+=("$dest")
+          done
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Tailscale ${{ needs.prepare.outputs.version }}" \
@@ -184,12 +267,13 @@ jobs:
 
           Architectures: $(echo '${{ needs.prepare.outputs.matrix }}' | jq -r 'join(", ")')
 
-          Install via opkg feed or download the .ipk directly." \
-            tailscale_*.ipk
+          OpenWRT ≤24 (opkg): add the feed or download a .ipk.
+          OpenWRT 25+ (apk):  add the feed or download a .apk." \
+            tailscale_*.ipk "${apks[@]}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Deploy opkg feed to gh-pages
+      - name: Deploy package feed (opkg + apk) to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

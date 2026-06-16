@@ -2,8 +2,12 @@
 _bin/
 feed/
 *.ipk
+*.apk
+tailscale.combined.*
+_ipk-work-*
+_apk-work-*
 
-# cert
+# cert / signing keys (public keys are committed; private keys are not)
 *.sec
 
 # macOS

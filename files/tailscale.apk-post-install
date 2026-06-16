@@ -1,0 +1,17 @@
+#!/bin/sh
+# apk post-install hook (OpenWRT 25+, apk-tools 3).
+#
+# apk runs this inside the target root, so absolute paths resolve correctly.
+# Unlike opkg there is no default_postinst / .list machinery under apk, so we
+# enable (and start, on a live system) the service explicitly. This mirrors the
+# .ipk path's default_postinst. The `tailscale` CLI symlink ships in the
+# payload, so it needs no handling here.
+#
+# `enable` creates the /etc/rc.d boot symlink (desirable even in an offline
+# image build); `start` is best-effort and silently skipped when procd is not
+# running (e.g. the image builder), so it never fails the install.
+if [ -x /etc/init.d/tailscale ]; then
+	/etc/init.d/tailscale enable
+	/etc/init.d/tailscale start 2>/dev/null
+fi
+exit 0

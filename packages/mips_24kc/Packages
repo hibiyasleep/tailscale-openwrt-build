@@ -1,14 +1,14 @@
 Package: tailscale
-Version: 1.98.8
+Version: 1.98.9
 Architecture: mips_24kc
 Maintainer: auto-build
 Description: Tailscale VPN combined binary (mips_24kc) built with aggressive omitting and compression.
-Installed-Size: 3628564
+Installed-Size: 3629556
 Depends: libc, ca-bundle, kmod-tun
 Provides: tailscaled
 Section: net
 Priority: optional
-Filename: tailscale_1.98.8_mips_24kc.ipk
-Size: 3630348
-SHA256sum: 8c926820444bc925723b3b20b6fa1967d2054446fb296edf42886d6466662ec5
+Filename: tailscale_1.98.9_mips_24kc.ipk
+Size: 3631298
+SHA256sum: d6dbdd15e5a91ab457ab48fc79c1143fee33ab2156a8e41e874a14933f313880
 

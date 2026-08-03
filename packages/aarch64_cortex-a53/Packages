@@ -1,14 +1,14 @@
 Package: tailscale
-Version: 1.98.9
+Version: 1.98.10
 Architecture: aarch64_cortex-a53
 Maintainer: auto-build
 Description: Tailscale VPN combined binary (aarch64_cortex-a53) built with aggressive omitting and compression.
-Installed-Size: 3716040
+Installed-Size: 3716636
 Depends: libc, ca-bundle, kmod-tun
 Provides: tailscaled
 Section: net
 Priority: optional
-Filename: tailscale_1.98.9_aarch64_cortex-a53.ipk
-Size: 3718345
-SHA256sum: ebd8701cb626f44899f5cc6a8b917ab0b6fb7ddcb0424b85182861ed32c1e535
+Filename: tailscale_1.98.10_aarch64_cortex-a53.ipk
+Size: 3718975
+SHA256sum: ce9d213a5aa09a46dcb4579ab8d4cb3924442e6468409525de2e95a04380b884
 

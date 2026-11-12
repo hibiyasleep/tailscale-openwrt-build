@@ -54,6 +54,9 @@ build_ipk() {
   # postinst) lets opkg track/remove it and keeps the CLI present even for
   # offline image-builder installs (IPKG_NO_SCRIPT=1).
   mkdir -p "$data/usr/sbin" "$data/etc/init.d" "$data/etc/config"
+  # Ship the (empty) state dir so it exists with root:root 0700 perms. It holds
+  # tailscaled.state (runtime state, NOT a conffile — see tailscale.conffiles).
+  mkdir -m700 -p "$data/etc/tailscale"
   install -m755 "$binary" "$data/usr/sbin/tailscaled"
   ln -s tailscaled "$data/usr/sbin/tailscale"
 
